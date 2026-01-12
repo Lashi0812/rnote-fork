@@ -171,6 +171,19 @@ impl RnAppWindow {
     }
 
     #[allow(unused)]
+    pub(crate) fn visual_debug_hide_brushstrokes(&self) -> bool {
+        self.property::<bool>("visual-debug-hide-brushstrokes")
+    }
+
+    #[allow(unused)]
+    pub(crate) fn set_visual_debug_hide_brushstrokes(&self, visual_debug_hide_brushstrokes: bool) {
+        self.set_property(
+            "visual-debug-hide-brushstrokes",
+            visual_debug_hide_brushstrokes.to_value(),
+        );
+    }
+
+    #[allow(unused)]
     pub(crate) fn save_in_progress(&self) -> bool {
         self.property::<bool>("save-in-progress")
     }
@@ -725,6 +738,8 @@ impl RnAppWindow {
             let can_undo = canvas.engine_ref().can_undo();
             let can_redo = canvas.engine_ref().can_redo();
             let visual_debug = self.engine_config().read().visual_debug;
+            let visual_debug_hide_brushstrokes =
+                self.engine_config().read().visual_debug_hide_brushstrokes;
 
             self.overlays()
                 .penpicker()
@@ -741,6 +756,7 @@ impl RnAppWindow {
             self.set_pen_sounds(pen_sounds);
             self.set_snap_positions(snap_positions);
             self.set_visual_debug(visual_debug);
+            self.set_visual_debug_hide_brushstrokes(visual_debug_hide_brushstrokes);
 
             // Current pen
             match pen_style {

@@ -171,6 +171,7 @@ impl Engine {
         let doc_bounds = self.document.bounds();
         let viewport = self.camera.viewport();
         let camera_transform = self.camera.transform_for_gtk_snapshot();
+        let config = self.config.read();
 
         snapshot.save();
         snapshot.transform(Some(&camera_transform));
@@ -178,8 +179,13 @@ impl Engine {
         self.draw_background_to_gtk_snapshot(snapshot)?;
         self.draw_format_borders_to_gtk_snapshot(snapshot)?;
         self.draw_origin_indicator_to_gtk_snapshot(snapshot)?;
-        self.store
-            .draw_strokes_to_gtk_snapshot(snapshot, doc_bounds, viewport);
+        if !config.visual_debug_hide_brushstrokes {
+            self.store
+                .draw_strokes_to_gtk_snapshot(snapshot, doc_bounds, viewport);
+        } else {
+            self.store
+                .draw_image_strokes_to_gtk_snapshot(snapshot, doc_bounds, viewport);
+        }
         snapshot.restore();
         /*
                let cairo_cx = snapshot.append_cairo(&graphene::Rect::from_p2d_aabb(surface_bounds));

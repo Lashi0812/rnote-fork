@@ -168,7 +168,12 @@ impl RnAppWindow {
         self.add_action(&action_devel_mode);
         let action_visual_debug = gio::PropertyAction::new("visual-debug", self, "visual-debug");
         self.add_action(&action_visual_debug);
-
+        let action_visual_debug_hide_brushstrokes = gio::PropertyAction::new(
+            "visual-debug-hide-brushstrokes",
+            self,
+            "visual-debug-hide-brushstrokes",
+        );
+        self.add_action(&action_visual_debug_hide_brushstrokes);
         let action_pen_style = gio::SimpleAction::new_stateful(
             "pen-style",
             Some(&String::static_variant_type()),

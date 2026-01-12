@@ -479,7 +479,35 @@ impl StrokeStore {
             }
         }
     }
+    /// Draws all strokes that hold images to a GTK snapshot.
+    #[cfg(feature = "ui")]
+    pub(crate) fn draw_image_strokes_to_gtk_snapshot(
+        &self,
+        snapshot: &gtk4::Snapshot,
+        _doc_bounds: Aabb,
+        viewport: Aabb,
+    ) {
+        use crate::strokes::Stroke;
+        use gtk4::prelude::*; // Import GTK traits to make .append_node() available
 
+        for key in self.stroke_keys_as_rendered_intersecting_bounds(viewport) {
+            // Pass `key` by value, as required by the function signature.
+            if let Some(stroke) = self.get_stroke_arc(key) {
+                if matches!(
+                    stroke.as_ref(),
+                    Stroke::BitmapImage(_) | Stroke::VectorImage(_)
+                ) {
+                    // Replicate the single-stroke drawing logic here:
+                    // Get the pre-rendered components and append them to the snapshot.
+                    if let Some(render_comp) = self.render_components.get(key) {
+                        for r in render_comp.rendernodes.iter() {
+                            snapshot.append_node(r);
+                        }
+                    }
+                }
+            }
+        }
+    }
     /// Draw all strokes on the gtk snapshot.
     #[cfg(feature = "ui")]
     pub(crate) fn draw_strokes_to_gtk_snapshot(

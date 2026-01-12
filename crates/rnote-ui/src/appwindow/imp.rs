@@ -31,6 +31,7 @@ pub(crate) struct RnAppWindow {
     pub(crate) focus_mode: Cell<bool>,
     pub(crate) devel_mode: Cell<bool>,
     pub(crate) visual_debug: Cell<bool>,
+    pub(crate) visual_debug_hide_brushstrokes: Cell<bool>,
 
     pub(crate) drawing_pad_controller: RefCell<Option<PadController>>,
     pub(crate) autosave_source_id: RefCell<Option<glib::SourceId>>,
@@ -70,6 +71,7 @@ impl Default for RnAppWindow {
             focus_mode: Cell::new(false),
             devel_mode: Cell::new(false),
             visual_debug: Cell::new(false),
+            visual_debug_hide_brushstrokes: Cell::new(false),
 
             drawing_pad_controller: RefCell::new(None),
             autosave_source_id: RefCell::new(None),
@@ -178,6 +180,9 @@ impl ObjectImpl for RnAppWindow {
                 glib::ParamSpecBoolean::builder("visual-debug")
                     .default_value(false)
                     .build(),
+                glib::ParamSpecBoolean::builder("visual-debug-hide-brushstrokes")
+                    .default_value(false)
+                    .build(),
                 glib::ParamSpecBoolean::builder("save-in-progress")
                     .default_value(false)
                     .build(),
@@ -200,6 +205,9 @@ impl ObjectImpl for RnAppWindow {
             "focus-mode" => self.focus_mode.get().to_value(),
             "devel-mode" => self.devel_mode.get().to_value(),
             "visual-debug" => self.visual_debug.get().to_value(),
+            "visual-debug-hide-brushstrokes" => {
+                self.visual_debug_hide_brushstrokes.get().to_value()
+            }
             "save-in-progress" => self.save_in_progress.get().to_value(),
             _ => unimplemented!(),
         }
@@ -315,6 +323,7 @@ impl ObjectImpl for RnAppWindow {
                 if !devel_mode {
                     debug!("Disabling developer mode, disabling visual debugging.");
                     obj.set_visual_debug(false);
+                    obj.set_visual_debug_hide_brushstrokes(false);
                 }
             }
             "visual-debug" => {
@@ -323,6 +332,17 @@ impl ObjectImpl for RnAppWindow {
                     .expect("The value needs to be of type `bool`");
                 self.visual_debug.replace(visual_debug);
                 self.engine_config.write().visual_debug = visual_debug;
+                if let Some(canvas) = obj.active_tab_canvas() {
+                    canvas.queue_draw();
+                }
+            }
+            "visual-debug-hide-brushstrokes" => {
+                let hide_brushstrokes = value
+                    .get::<bool>()
+                    .expect("The value needs to be of type `bool`");
+                self.visual_debug_hide_brushstrokes
+                    .replace(hide_brushstrokes);
+                self.engine_config.write().visual_debug_hide_brushstrokes = hide_brushstrokes;
                 if let Some(canvas) = obj.active_tab_canvas() {
                     canvas.queue_draw();
                 }

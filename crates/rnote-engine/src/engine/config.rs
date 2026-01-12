@@ -22,6 +22,8 @@ pub struct EngineConfig {
     pub snap_positions: bool,
     #[serde(skip)]
     pub visual_debug: bool,
+    #[serde(skip)]
+    pub visual_debug_hide_brushstrokes: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -57,5 +59,6 @@ impl EngineConfigShared {
         write.optimize_epd = config.optimize_epd;
         write.snap_positions = config.snap_positions;
         write.visual_debug = config.visual_debug;
+        write.visual_debug_hide_brushstrokes = config.visual_debug_hide_brushstrokes;
     }
 }
