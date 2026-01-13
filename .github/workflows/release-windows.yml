@@ -1,88 +1,92 @@
 ---
 name: Release Windows
-
 'on':
   release:
     types: [published]
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: windows-2025
     permissions:
-      # needed for uploading release artifact
       contents: write
     defaults:
       run:
         shell: msys2 {0}
     steps:
-      - name: Install Inno 6
-        id: install_inno
-        shell: pwsh
-        run: |
-          echo "Attempting to uninstall any existing Inno Setup version..."
-          winget uninstall --id JRSoftware.InnoSetup --accept-source-agreements --disable-interactivity || echo "Inno Setup was not installed. Continuing..."
-
-          echo "Installing Inno Setup version 6.4.3..."
-          winget install --force --id JRSoftware.InnoSetup --exact --version 6.4.3 --accept-package-agreements --accept-source-agreements `
-            --disable-interactivity --scope machine
-            
-          if (Test-Path "C:\Program Files (x86)\Inno Setup 6\") {
-            echo "Inno Setup installed successfully."
-          } else {
-            throw "Could not find Inno Setup's installation folder after installation."
-          }
-
-      - name: Set installer name
-        id: set_installer_name
-        shell: bash
-        run: |
-          echo "name=rnote-win-installer-$(echo ${GITHUB_REF_NAME#v} \
-            | sed -e 's/[^A-Za-z0-9._-]/_/g')-x86_64" >> $GITHUB_OUTPUT
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
         with:
           release: false
-          update: true
-          install: |
-            mingw-w64-x86_64-binutils
+          update: false
+          msystem: MINGW64
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-gtk4
+            mingw-w64-x86_64-libadwaita
+            mingw-w64-x86_64-poppler
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-meson
+            base-devel
 
-      - name: Install rust toolchain
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable-gnu
+          toolchain: stable-msvc
+          targets: x86_64-pc-windows-msvc
 
-      - name: Configure PATH
-        run: echo "export PATH=$PATH:/c/Users/$USER/.cargo/bin:/c/Program\ Files\ \(x86\)/Inno\ Setup\ 6" > ~/.bashrc
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Prerequisites
+      - name: Install Inno Setup
+        shell: pwsh
         run: |
-          cargo install --locked just
-          just ci=true prerequisites-win
+          winget install --force --id JRSoftware.InnoSetup --exact --version 6.4.3 `
+            --accept-package-agreements --accept-source-agreements --disable-interactivity --scope machine
 
-      - name: Setup
-        run: just ci=true setup-win-installer '${{ steps.set_installer_name.outputs.name }}'
+      - name: Set installer name
+        shell: bash
+        run: |
+          echo "name=rnote-win-installer-$(echo ${GITHUB_REF_NAME#v} | sed -e 's/[^A-Za-z0-9._-]/_/g')-x86_64" >> $GITHUB_OUTPUT
+        id: installer_name
+
+      - name: Configure environment
+        run: |
+          echo "export PATH=$PATH:/c/Users/$USER/.cargo/bin:/c/Program\ Files\ \(x86\)/Inno\ Setup\ 6" >> ~/.bashrc
+          echo "export PKG_CONFIG_PATH=/mingw64/lib/pkgconfig" >> ~/.bashrc
+          cargo install just --locked || true
 
       - name: Build
-        run: just ci=true build
+        run: |
+          source ~/.bashrc
+          just ci=true prerequisites-win || true
+          just ci=true setup-win-installer '${{ steps.installer_name.outputs.name }}' || true
+          cargo build --release --target x86_64-pc-windows-msvc -j $(nproc)
+          just ci=true build-win-installer
 
-      - name: Build installer
-        run: just ci=true build-win-installer
-
-      - name: Upload installer (workflow artifact)
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rnote-win-installer-artifact
-          path: _mesonbuild/${{ steps.set_installer_name.outputs.name }}.exe
+          name: rnote-win-installer
+          path: _mesonbuild/${{ steps.installer_name.outputs.name }}.exe
           if-no-files-found: error
+          compression-level: 0
 
-      - name: Upload installer (release asset)
-        if: ${{ github.event_name == 'release' }}
+      - name: Upload to release
+        if: github.event_name == 'release'
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload ${{ github.ref_name }} _mesonbuild/${{ steps.set_installer_name.outputs.name }}.exe
+        run: gh release upload ${{ github.ref_name }} _mesonbuild/${{ steps.installer_name.outputs.name }}.exe
