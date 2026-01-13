@@ -1,9 +1,10 @@
----
 name: Release Windows
-'on':
+
+on:
   release:
     types: [published]
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: windows-2025
@@ -13,81 +14,96 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      # 1. Install Inno Setup Cleanly
+      - name: Install Inno 6
+        id: install_inno
+        shell: pwsh
+        run: |
+          echo "Cleaning up any existing Inno Setup..."
+          winget uninstall --id JRSoftware.InnoSetup --accept-source-agreements --disable-interactivity || echo "Inno Setup not found."
 
+          echo "Installing Inno Setup 6.4.3..."
+          winget install --force --id JRSoftware.InnoSetup --exact --version 6.4.3 --accept-package-agreements --accept-source-agreements --disable-interactivity --scope machine
+            
+          if (Test-Path "C:\Program Files (x86)\Inno Setup 6\") {
+            echo "Inno Setup installed successfully."
+          } else {
+            throw "Installation failed: Folder not found."
+          }
+
+      - name: Set installer name
+        id: set_installer_name
+        shell: bash
+        run: |
+          echo "name=rnote-win-installer-$(echo ${GITHUB_REF_NAME#v} | sed -e 's/[^A-Za-z0-9._-]/_/g')-x86_64" >> $GITHUB_OUTPUT
+
+      # 2. Setup MSYS2 Environment
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
         with:
           release: false
-          update: false
-          msystem: MINGW64
-          install: >-
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-gtk4
-            mingw-w64-x86_64-libadwaita
-            mingw-w64-x86_64-poppler
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-meson
-            base-devel
+          update: true
+          install: mingw-w64-x86_64-binutils
 
-      - name: Cache Rust
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Install Rust toolchain
+      # 3. Setup Rust
+      - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable-msvc
-          targets: x86_64-pc-windows-msvc
+          toolchain: stable-gnu
 
-      - name: Install Inno Setup
-        shell: pwsh
-        run: |
-          winget install --force --id JRSoftware.InnoSetup --exact --version 6.4.3 `
-            --accept-package-agreements --accept-source-agreements --disable-interactivity --scope machine
+      - name: Configure PATH
+        run: echo "export PATH=$PATH:/c/Users/$USER/.cargo/bin:/c/Program\ Files\ \(x86\)/Inno\ Setup\ 6" > ~/.bashrc
 
-      - name: Set installer name
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 4. CRITICAL FIX: Modify Cargo.toml for Stability
+      # We modify the release profile to prioritize stability over raw speed.
+      - name: Apply Stability Fixes
         shell: bash
         run: |
-          echo "name=rnote-win-installer-$(echo ${GITHUB_REF_NAME#v} | sed -e 's/[^A-Za-z0-9._-]/_/g')-x86_64" >> $GITHUB_OUTPUT
-        id: installer_name
+          echo "Modifying Cargo.toml to prevent msvcrt.dll crashes..."
 
-      - name: Install Just
-        shell: pwsh
-        run: cargo install just --locked
+          # Disable Link Time Optimization (Causes crashes on MinGW)
+          sed -i 's/lto = true/lto = false/' Cargo.toml
+
+          # Change optimization level to 's' (Size). 
+          # '3' (Speed) triggers vectorization bugs in MinGW that cause crashes.
+          # We use sed to append this setting to the [profile.release] section.
+          sed -i '/\[profile.release\]/a opt-level = "s"' Cargo.toml
+
+          # Ensure panic is set to abort (Safer for Windows GUI apps)
+          sed -i '/\[profile.release\]/a panic = "abort"' Cargo.toml
+
+          echo "--- Content of modified Cargo.toml section ---"
+          grep -A 10 "\[profile.release\]" Cargo.toml
+
+      # 5. Build Process
+      - name: Prerequisites
+        run: |
+          cargo install --locked just
+          just ci=true prerequisites-win
+
+      - name: Setup
+        run: just ci=true setup-win-installer '${{ steps.set_installer_name.outputs.name }}'
 
       - name: Build
-        shell: pwsh
-        env:
-          PKG_CONFIG_PATH: C:\msys64\mingw64\lib\pkgconfig
-        run: |
-          $env:PATH = "$env:PATH;C:\Program Files (x86)\Inno Setup 6"
-          just ci=true prerequisites-win
-          just ci=true setup-win-installer '${{ steps.installer_name.outputs.name }}'
-          cargo build --release --target x86_64-pc-windows-msvc
-          just ci=true build-win-installer
+        run: just ci=true build
 
-      - name: Upload artifact
+      - name: Build installer
+        run: just ci=true build-win-installer
+
+      # 6. Upload Results
+      - name: Upload installer (workflow artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: rnote-win-installer
-          path: _mesonbuild/${{ steps.installer_name.outputs.name }}.exe
+          name: rnote-win-installer-artifact
+          path: _mesonbuild/${{ steps.set_installer_name.outputs.name }}.exe
           if-no-files-found: error
-          compression-level: 0
 
-      - name: Upload to release
-        if: github.event_name == 'release'
+      - name: Upload installer (release asset)
+        if: ${{ github.event_name == 'release' }}
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload ${{ github.ref_name }} _mesonbuild/${{ steps.installer_name.outputs.name }}.exe
+        run: gh release upload ${{ github.ref_name }} _mesonbuild/${{ steps.set_installer_name.outputs.name }}.exe
