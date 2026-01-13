@@ -62,18 +62,19 @@ jobs:
           echo "name=rnote-win-installer-$(echo ${GITHUB_REF_NAME#v} | sed -e 's/[^A-Za-z0-9._-]/_/g')-x86_64" >> $GITHUB_OUTPUT
         id: installer_name
 
-      - name: Configure environment
-        run: |
-          echo "export PATH=$PATH:/c/Users/$USER/.cargo/bin:/c/Program\ Files\ \(x86\)/Inno\ Setup\ 6" >> ~/.bashrc
-          echo "export PKG_CONFIG_PATH=/mingw64/lib/pkgconfig" >> ~/.bashrc
-          cargo install just --locked || true
+      - name: Install Just
+        shell: pwsh
+        run: cargo install just --locked
 
       - name: Build
+        shell: pwsh
+        env:
+          PKG_CONFIG_PATH: C:\msys64\mingw64\lib\pkgconfig
         run: |
-          source ~/.bashrc
-          just ci=true prerequisites-win || true
-          just ci=true setup-win-installer '${{ steps.installer_name.outputs.name }}' || true
-          cargo build --release --target x86_64-pc-windows-msvc -j $(nproc)
+          $env:PATH = "$env:PATH;C:\Program Files (x86)\Inno Setup 6"
+          just ci=true prerequisites-win
+          just ci=true setup-win-installer '${{ steps.installer_name.outputs.name }}'
+          cargo build --release --target x86_64-pc-windows-msvc
           just ci=true build-win-installer
 
       - name: Upload artifact
