@@ -1,106 +1,100 @@
 name: Release Windows
-
-on:
+'on':
   release:
     types: [published]
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: windows-2025
     permissions:
+      # needed for uploading release artifact
       contents: write
     defaults:
       run:
         shell: msys2 {0}
     steps:
-      # 1. Install Inno Setup Cleanly
       - name: Install Inno 6
         id: install_inno
         shell: pwsh
         run: |
-          echo "Cleaning up any existing Inno Setup..."
-          winget uninstall --id JRSoftware.InnoSetup --accept-source-agreements --disable-interactivity || echo "Inno Setup not found."
-
-          echo "Installing Inno Setup 6.4.3..."
-          winget install --force --id JRSoftware.InnoSetup --exact --version 6.4.3 --accept-package-agreements --accept-source-agreements --disable-interactivity --scope machine
+          echo "Attempting to uninstall any existing Inno Setup version..."
+          winget uninstall --id JRSoftware.InnoSetup --accept-source-agreements --disable-interactivity || echo "Inno Setup was not installed. Continuing..."
+          echo "Installing Inno Setup version 6.4.3..."
+          winget install --force --id JRSoftware.InnoSetup --exact --version 6.4.3 --accept-package-agreements --accept-source-agreements `
+            --disable-interactivity --scope machine
             
           if (Test-Path "C:\Program Files (x86)\Inno Setup 6\") {
             echo "Inno Setup installed successfully."
           } else {
-            throw "Installation failed: Folder not found."
+            throw "Could not find Inno Setup's installation folder after installation."
           }
-
       - name: Set installer name
         id: set_installer_name
         shell: bash
         run: |
-          echo "name=rnote-win-installer-$(echo ${GITHUB_REF_NAME#v} | sed -e 's/[^A-Za-z0-9._-]/_/g')-x86_64" >> $GITHUB_OUTPUT
-
-      # 2. Setup MSYS2 Environment
+          echo "name=rnote-win-installer-$(echo ${GITHUB_REF_NAME#v} \
+            | sed -e 's/[^A-Za-z0-9._-]/_/g')-x86_64" >> $GITHUB_OUTPUT
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
         with:
           release: false
           update: true
-          install: mingw-w64-x86_64-binutils
-
-      # 3. Setup Rust
+          install: |
+            mingw-w64-x86_64-binutils
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable-gnu
-
       - name: Configure PATH
         run: echo "export PATH=$PATH:/c/Users/$USER/.cargo/bin:/c/Program\ Files\ \(x86\)/Inno\ Setup\ 6" > ~/.bashrc
 
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 4. CRITICAL FIX: Modify Cargo.toml for Stability
-      # We modify the release profile to prioritize stability over raw speed.
+      # --- CRITICAL FIX START ---
       - name: Apply Stability Fixes
         shell: bash
         run: |
           echo "Modifying Cargo.toml to prevent msvcrt.dll crashes..."
 
-          # Disable Link Time Optimization (Causes crashes on MinGW)
+          # 1. Disable LTO (Replace existing line)
+          # We use substitution (s///) instead of append (a) to avoid duplicate keys
           sed -i 's/lto = true/lto = false/' Cargo.toml
 
-          # Change optimization level to 's' (Size). 
-          # '3' (Speed) triggers vectorization bugs in MinGW that cause crashes.
-          # We use sed to append this setting to the [profile.release] section.
-          sed -i '/\[profile.release\]/a opt-level = "s"' Cargo.toml
+          # 2. Change Optimization Level (Replace existing line)
+          # 'opt-level = 3' causes crashes on Windows/MinGW. We switch to "s" (size).
+          # We replace the specific line to avoid duplicates.
+          sed -i 's/opt-level = 3/opt-level = "s"/' Cargo.toml
 
-          # Ensure panic is set to abort (Safer for Windows GUI apps)
-          sed -i '/\[profile.release\]/a panic = "abort"' Cargo.toml
+          # 3. Ensure panic = abort (Replace or Append)
+          # If panic is defined, replace it.
+          sed -i 's/panic = .*/panic = "abort"/' Cargo.toml
+
+          # If panic wasn't there to replace, we append it.
+          # (grep returns 1 if not found)
+          if ! grep -q 'panic = "abort"' Cargo.toml; then
+             sed -i '/\[profile.release\]/a panic = "abort"' Cargo.toml
+          fi
 
           echo "--- Content of modified Cargo.toml section ---"
           grep -A 10 "\[profile.release\]" Cargo.toml
-
-      # 5. Build Process
+      # --- CRITICAL FIX END ---
       - name: Prerequisites
         run: |
           cargo install --locked just
           just ci=true prerequisites-win
-
       - name: Setup
         run: just ci=true setup-win-installer '${{ steps.set_installer_name.outputs.name }}'
-
       - name: Build
         run: just ci=true build
-
       - name: Build installer
         run: just ci=true build-win-installer
-
-      # 6. Upload Results
       - name: Upload installer (workflow artifact)
         uses: actions/upload-artifact@v4
         with:
           name: rnote-win-installer-artifact
           path: _mesonbuild/${{ steps.set_installer_name.outputs.name }}.exe
           if-no-files-found: error
-
       - name: Upload installer (release asset)
         if: ${{ github.event_name == 'release' }}
         shell: powershell
