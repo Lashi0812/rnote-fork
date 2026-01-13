@@ -28,20 +28,26 @@ jobs:
         run: |
           echo "name=rnote-win-installer-$(echo ${GITHUB_REF_NAME#v} | sed -e 's/[^A-Za-z0-9._-]/_/g')-x86_64" >> $GITHUB_OUTPUT
 
+      # Install FULL MinGW toolchain, not just binutils
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
         with:
           release: false
           update: true
-          install: mingw-w64-x86_64-binutils
+          install: mingw-w64-x86_64-toolchain # Full toolchain includes GCC
 
+      # Use GNU toolchain to match MSYS2 environment
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable-msvc # Use MSVC for Windows compatibility
+          toolchain: stable-gnu
+          targets: x86_64-pc-windows-gnu
 
+      # Add cargo to PATH immediately, not via .bashrc
       - name: Configure PATH
-        run: echo "export PATH=$PATH:/c/Users/$USER/.cargo/bin:/c/Program\ Files\ \(x86\)/Inno\ Setup\ 6" > ~/.bashrc
+        run: |
+          echo "/c/Users/$USER/.cargo/bin" >> $GITHUB_PATH
+          echo "export PATH=$PATH:/c/Program\ Files\ \(x86\)/Inno\ Setup\ 6" > ~/.bashrc
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,7 +59,7 @@ jobs:
           echo "Modifying Cargo.toml..."
           # Disable LTO (Confuses Windows Linker)
           sed -i 's/lto = true/lto = false/' Cargo.toml
-          # Optimization level size (Safer for Windows)
+          # Optimization level size (Safer for MinGW)
           sed -i 's/opt-level = 3/opt-level = "s"/' Cargo.toml
           # Abort on panic (Prevents stack unwinding crashes)
           sed -i 's/panic = .*/panic = "abort"/' Cargo.toml
@@ -61,16 +67,8 @@ jobs:
              sed -i '/\[profile.release\]/a panic = "abort"' Cargo.toml
           fi
 
-      # --- Static CRT Linking with MSVC (FIXES THE CRASH) ---
-      - name: Configure Static Linking
-        shell: bash
-        run: |
-          echo "Creating .cargo/config.toml for static CRT linking..."
-          mkdir -p .cargo
-          echo '[target.x86_64-pc-windows-msvc]' > .cargo/config.toml
-          # Statically link CRT to avoid DLL hell and msvcrt.dll conflicts
-          echo 'rustflags = ["-C", "target-feature=+crt-static"]' >> .cargo/config.toml
-          cat .cargo/config.toml
+      # --- REMOVED: Problematic Dynamic Linking Config ---
+      # The prefer-dynamic flag caused your original msvcrt.dll crash
 
       - name: Prerequisites
         run: |
@@ -86,7 +84,8 @@ jobs:
       - name: Build
         run: just ci=true build
 
-      # --- REMOVED: DLL Copying Step (No longer needed with static linking) ---
+      # --- REMOVED: DLL Copying Step ---
+      # No longer needed - Rust links statically by default with GNU toolchain
 
       - name: Build installer
         run: just ci=true build-win-installer
